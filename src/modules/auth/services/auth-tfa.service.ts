@@ -9,7 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { authenticator } from 'otplib';
 import { User, UserStatus } from '../../user/entities/user.entity';
-import { LoginDto } from '../dto/auth.dto';
+import { LoginDto, DeviceInfoDto } from '../dto/auth.dto';
 import { LoginResponse } from '../../../common/interfaces';
 
 @Injectable()
@@ -31,6 +31,20 @@ export class AuthTfaService {
       this.logger.error('TFA 验证失败', error);
       return false;
     }
+  }
+
+  /**
+   * 验证字符串是否为有效的 TFA 密钥格式（Base32）
+   * 用于区分 TFA secret 和邮箱验证的 UUID secret，
+   * 防止用户通过伪造 tfaCode 控制安全敏感路由
+   *
+   * @param secret 待验证的字符串
+   * @returns 是否为有效的 Base32 格式 TFA 密钥
+   */
+  isTfaSecret(secret: string): boolean {
+    // TFA 密钥为 Base32 编码（仅包含 A-Z, 2-7），长度通常为 16 或 32
+    // 邮箱验证的 secret 为 UUID 格式（包含小写字母和连字符）
+    return /^[A-Z2-7]+=*$/i.test(secret) && secret.length >= 16;
   }
 
   async setupTfa(
@@ -174,8 +188,9 @@ export class AuthTfaService {
       userGuid: string,
       deviceId?: string,
       deviceUuid?: string,
-      deviceInfo?: Record<string, any>,
+      deviceInfo?: DeviceInfoDto,
     ) => Promise<void>,
+    buildUserPayload?: (user: User) => Record<string, unknown>,
   ): Promise<LoginResponse> {
     const { username, tfaCode, secret, id, uuid, deviceInfo } = loginDto;
 
@@ -197,6 +212,7 @@ export class AuthTfaService {
       .addSelect('user.tfaSecret')
       .addSelect('user.info')
       .addSelect('user.thirdAuthType')
+      .addSelect('user.avatar')
       .getOne();
 
     if (!user) {
@@ -222,15 +238,17 @@ export class AuthTfaService {
     return {
       access_token: token,
       type: 'access_token',
-      user: {
-        name: user.username,
-        email: user.email || undefined,
-        note: user.note || undefined,
-        status: user.status,
-        info: user.getUserInfo(),
-        is_admin: user.isAdmin,
-        third_auth_type: user.thirdAuthType || undefined,
-      },
+      user: buildUserPayload
+        ? (buildUserPayload(user) as LoginResponse['user'])
+        : {
+            name: user.username,
+            email: user.email || undefined,
+            note: user.note || undefined,
+            status: user.status,
+            info: user.getUserInfo(),
+            is_admin: user.isAdmin,
+            third_auth_type: user.thirdAuthType || undefined,
+          },
     };
   }
 }
