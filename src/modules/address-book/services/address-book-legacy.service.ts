@@ -8,7 +8,7 @@ import {
   AddressBookTag,
   AddressBookPeerTag,
 } from '../entities';
-import { Sysinfo } from '../../../common/entities';
+import { Sysinfo, Peer } from '../../../common/entities';
 import { mapOsToPlatform } from '../../../common/utils/platform.util';
 
 @Injectable()
@@ -34,6 +34,8 @@ export class AddressBookLegacyService {
     private addressBookPeerTagRepository: Repository<AddressBookPeerTag>,
     @InjectRepository(Sysinfo)
     private sysinfoRepository: Repository<Sysinfo>,
+    @InjectRepository(Peer)
+    private peerRepository: Repository<Peer>,
   ) {}
 
   /**
@@ -88,6 +90,15 @@ export class AddressBookLegacyService {
 
     const sysinfoMap = new Map(sysinfos.map((s) => [s.uuid, s]));
 
+    // 从 peers 表获取设备信息（deviceId 引用 peers.uuid，需要解析为 peers.id）
+    const peerRecords =
+      deviceIds.length > 0
+        ? await this.peerRepository.find({
+            where: { uuid: In(deviceIds) },
+          })
+        : [];
+    const peerMap = new Map(peerRecords.map((p) => [p.uuid, p]));
+
     // 如果地址簿为空，返回 "null"
     if (tags.length === 0 && peers.length === 0) {
       return 'null';
@@ -102,8 +113,9 @@ export class AddressBookLegacyService {
     // 构建设备列表
     const peersData = peers.map((p) => {
       const sysinfo = sysinfoMap.get(p.deviceId);
+      const peerRecord = peerMap.get(p.deviceId);
       return {
-        id: p.deviceId,
+        id: peerRecord?.id || '',
         hash: p.hash || '',
         username: sysinfo?.username || '',
         hostname: sysinfo?.hostname || '',
@@ -231,11 +243,15 @@ export class AddressBookLegacyService {
     // 创建新设备
     if (parsedData.peers && parsedData.peers.length > 0) {
       for (const peerData of parsedData.peers) {
+        // 通过 findOrCreatePeer 查找或创建 peer 记录，获取 uuid 作为 deviceId
+        // 与新版 API 保持一致：deviceId 始终引用 peers.uuid
+        const peerRecord = await this.findOrCreatePeer(peerData.id);
+
         const peerGuid = uuidv4();
         const peer = this.addressBookPeerRepository.create({
           guid: peerGuid,
           addressBookGuid,
-          deviceId: peerData.id,
+          deviceId: peerRecord.uuid,
           hash: peerData.hash || '',
           alias: peerData.alias || '',
         });
@@ -258,5 +274,34 @@ export class AddressBookLegacyService {
     }
 
     return 'null';
+  }
+
+  /**
+   * 查找或创建设备记录
+   * 在 peers 表中查找指定 id 的设备，如果找不到则自动创建
+   *
+   * @param id 设备ID（RustDesk 数字 ID、IP 地址或已有记录的任何格式）
+   * @returns Peer 记录
+   */
+  private async findOrCreatePeer(id: string): Promise<Peer> {
+    const peerRecord = await this.peerRepository.findOne({
+      where: { id },
+    });
+
+    if (peerRecord) {
+      return peerRecord;
+    }
+
+    // 对于不在 peers 表中的设备，自动创建 peer 记录
+    // 这包括 IP 格式设备（如 192.168.1.94）以及尚未发送心跳的数字 ID 设备
+    const newPeer = this.peerRepository.create({
+      uuid: uuidv4(),
+      id,
+      ver: 0,
+      modifiedAt: 0,
+      lastHeartbeat: null,
+    });
+    await this.peerRepository.save(newPeer);
+    return newPeer;
   }
 }
