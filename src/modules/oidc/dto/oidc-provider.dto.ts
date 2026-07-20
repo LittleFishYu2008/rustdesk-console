@@ -61,10 +61,6 @@ export class CreateOidcProviderDto {
   @IsBoolean()
   @IsOptional()
   enabled?: boolean;
-
-  @IsNumber()
-  @IsOptional()
-  priority?: number;
 }
 
 export class UpdateOidcProviderDto {
@@ -119,10 +115,6 @@ export class UpdateOidcProviderDto {
   @IsBoolean()
   @IsOptional()
   enabled?: boolean;
-
-  @IsNumber()
-  @IsOptional()
-  priority?: number;
 }
 
 export class ToggleOidcProviderDto {

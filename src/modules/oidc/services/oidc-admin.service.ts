@@ -91,7 +91,6 @@ export class OidcAdminService {
     provider.userinfoEndpoint = (dto.userinfoEndpoint || null) as string;
     provider.jwksUri = (dto.jwksUri || null) as string;
     provider.enabled = dto.enabled !== undefined ? dto.enabled : true;
-    provider.priority = dto.priority || 0;
 
     await this.providerRepository.save(provider);
     this.logger.log(`OIDC 提供商创建成功: ${dto.name}`);
@@ -139,7 +138,6 @@ export class OidcAdminService {
       }),
       ...(dto.jwksUri !== undefined && { jwksUri: dto.jwksUri }),
       ...(dto.enabled !== undefined && { enabled: dto.enabled }),
-      ...(dto.priority !== undefined && { priority: dto.priority }),
     });
 
     await this.providerRepository.save(provider);
@@ -151,6 +149,31 @@ export class OidcAdminService {
 
     this.logger.log(`OIDC 提供商更新成功: ${provider.name}`);
     return provider;
+  }
+
+  async sort(guids: string[]): Promise<void> {
+    const existingProviders = await this.providerRepository.find({
+      where: guids.map((guid) => ({ guid })),
+    });
+
+    if (existingProviders.length !== guids.length) {
+      const existingGuids = new Set(existingProviders.map((p) => p.guid));
+      const invalidGuids = guids.filter((g) => !existingGuids.has(g));
+      throw new BadRequestException(
+        `以下 OIDC 提供商不存在: ${invalidGuids.join(', ')}`,
+      );
+    }
+
+    for (const provider of existingProviders) {
+      const priority = guids.indexOf(provider.guid);
+      if (provider.priority !== priority) {
+        await this.providerRepository.update(
+          { guid: provider.guid },
+          { priority },
+        );
+      }
+    }
+    this.logger.log(`OIDC 提供商排序已更新`);
   }
 
   async remove(guid: string): Promise<void> {

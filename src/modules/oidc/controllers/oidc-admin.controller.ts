@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  ParseArrayPipe,
 } from '@nestjs/common';
 import { AdminGuard } from '../../../common/guards/admin.guard';
 import { OidcAdminService } from '../services/oidc-admin.service';
@@ -39,6 +40,16 @@ export class OidcAdminController {
   @HttpCode(HttpStatus.OK)
   async create(@Body() dto: CreateOidcProviderDto) {
     return this.oidcAdminService.create(dto);
+  }
+
+  @Patch('sort')
+  @HttpCode(HttpStatus.OK)
+  async sort(
+    @Body(new ParseArrayPipe({ items: String, disableErrorMessages: false }))
+    guids: string[],
+  ) {
+    await this.oidcAdminService.sort(guids);
+    return { message: 'OIDC 提供商排序已更新' };
   }
 
   @Patch(':guid')
