@@ -104,6 +104,10 @@ export class UpdateUserDto {
   @IsBoolean()
   @IsOptional()
   is_admin?: boolean;
+
+  @IsUUID('4')
+  @IsOptional()
+  user_group_guid?: string;
 }
 
 export class UpdateUserSecurityDto {
