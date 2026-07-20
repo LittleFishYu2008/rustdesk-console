@@ -43,12 +43,27 @@ export class SysinfoService {
   /**
    * 创建或更新系统信息
    * 接收设备上报的系统信息，存储或更新到数据库
+   * 仅处理在 peers 表中已注册的设备，未注册设备返回 ID_NOT_FOUND
    *
    * @param sysinfoDto 系统信息数据
-   * @returns 保存的系统信息记录
+   * @returns 更新结果，found 为 false 表示设备在 peers 表中不存在
    */
-  async createSysinfo(sysinfoDto: SysinfoDto): Promise<Sysinfo> {
-    // 根据uuid查找是否已存在记录
+  async createSysinfo(
+    sysinfoDto: SysinfoDto,
+  ): Promise<{ found: boolean; sysinfo?: Sysinfo }> {
+    // 先校验设备是否在 peers 表中已注册
+    const peer = await this.peerRepository.findOne({
+      where: { uuid: sysinfoDto.uuid },
+    });
+
+    if (!peer) {
+      this.logger.debug(
+        `设备 ${sysinfoDto.uuid} 在 peers 表中不存在，返回 ID_NOT_FOUND`,
+      );
+      return { found: false };
+    }
+
+    // 根据uuid查找 sysinfos 表是否已存在记录
     const existingSysinfo = await this.sysinfoRepository.findOne({
       where: { uuid: sysinfoDto.uuid },
     });
@@ -103,7 +118,7 @@ export class SysinfoService {
     // 处理预设功能
     await this.processPresetSettings(savedSysinfo, sysinfoDto);
 
-    return savedSysinfo;
+    return { found: true, sysinfo: savedSysinfo };
   }
 
   /**
