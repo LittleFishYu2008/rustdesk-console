@@ -120,14 +120,28 @@ export class AuthService {
    * @throws UnauthorizedException 当认证失败时抛出
    */
   async login(loginDto: LoginDto): Promise<LoginResponse> {
-    const { username, password, id, uuid, type, tfaCode } = loginDto;
+    const { username, password, id, uuid, type } = loginDto;
 
     // 处理邮箱验证码登录（第二步）
-    // 兼容 RustDesk 客户端：客户端使用 type: "email_code" + tfaCode 提交 2FA 验证码
+    // 兼容 RustDesk 客户端：客户端使用 type: "email_code" 提交二次验证
     // secret 为服务端下发的会话标识符（UUID），TFA 与邮箱验证均使用此机制跟踪一次登录
-    // 通过 tfaCode 字段区分 TFA 登录与邮箱验证码登录（邮箱验证码使用 verificationCode 字段）
+    // 通过 secret 关联的服务端会话 method 字段区分 TFA 登录与邮箱验证码登录，
+    // 而非使用用户可控的 tfaCode 字段控制流程，避免攻击者通过操控 tfaCode 绕过验证
     if (type === 'email_code') {
-      if (tfaCode && loginDto.secret) {
+      // type === 'email_code' 是二次验证请求，secret 必须存在
+      if (!loginDto.secret) {
+        throw new BadRequestException({ error: '缺少会话标识符' });
+      }
+      // 通过 secret 查找会话，由服务端会话的 method 决定路由
+      const session = await this.verificationSessionRepository.findOne({
+        where: { secret: loginDto.secret, used: false },
+      });
+      if (!session) {
+        throw new UnauthorizedException({
+          error: '登录会话已过期或无效，请重新登录',
+        });
+      }
+      if (session.method === 'tfa') {
         return this.tfaService.handleTfaLogin(
           loginDto,
           (user, deviceId, deviceUuid) =>
@@ -193,7 +207,7 @@ export class AuthService {
     }
 
     // 回退到本地账号密码认证
-    return this.localLogin(username, password, id, uuid, tfaCode);
+    return this.localLogin(username, password, id, uuid);
   }
 
   /**
@@ -243,7 +257,6 @@ export class AuthService {
    * @param password 密码
    * @param id 设备 ID
    * @param uuid 设备 UUID
-   * @param tfaCode 双因素认证码
    * @returns 登录响应
    */
   private async localLogin(
@@ -251,7 +264,6 @@ export class AuthService {
     password: string,
     id?: string,
     uuid?: string,
-    tfaCode?: string,
   ): Promise<LoginResponse> {
     // 查找用户（支持用户名或邮箱登录）
     const user = await this.userRepository
@@ -295,17 +307,12 @@ export class AuthService {
     }
 
     // 检查是否需要双因素认证
+    // localLogin 仅在首次登录（账号密码）时调用，二次验证通过 tfa_code/email_code 类型处理
+    // 因此这里始终发起 TFA 流程，无需检查 secret
     if (user.tfaSecret) {
-      if (!tfaCode) {
-        // 返回会话标识符（UUID）而非 TFA 密钥，避免密钥泄露导致 2FA 失效
-        return this.tfaService.initiateTfaLogin(user, (u) =>
-          this.buildUserPayload(u),
-        );
-      }
-      const isValidTfa = this.tfaService.verifyTfaCode(user.tfaSecret, tfaCode);
-      if (!isValidTfa) {
-        throw new UnauthorizedException({ error: '双因素认证验证码错误' });
-      }
+      return this.tfaService.initiateTfaLogin(user, (u) =>
+        this.buildUserPayload(u),
+      );
     } else if (userInfo?.other?.tfa_enforce) {
       return {
         type: 'enforce_tfa',
