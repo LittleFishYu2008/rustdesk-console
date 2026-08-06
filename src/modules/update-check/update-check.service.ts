@@ -9,9 +9,25 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { SystemSetting } from '../settings/entities/system-setting.entity';
 import { User } from '../user/entities/user.entity';
+import { UserToken } from '../user/entities/user-token.entity';
+import { Invitation } from '../user/entities/invitation.entity';
 import { Peer, PeerStatus } from '../../common/entities/peer.entity';
 import { DeviceGroup } from '../device-group/entities/device-group.entity';
+import { DeviceGroupUserPermission } from '../device-group/entities/device-group-user-permission.entity';
 import { ConnectionAudit } from '../audit/entities/connection-audit.entity';
+import { FileAudit } from '../audit/entities/file-audit.entity';
+import { AlarmAudit } from '../audit/entities/alarm-audit.entity';
+import { AddressBook } from '../address-book/entities/address-book.entity';
+import { AddressBookPeer } from '../address-book/entities/address-book-peer.entity';
+import { AddressBookTag } from '../address-book/entities/address-book-tag.entity';
+import { AddressBookRule } from '../address-book/entities/address-book-rule.entity';
+import { Strategy } from '../strategy/entities/strategy.entity';
+import { UserGroup } from '../user-group/entities/user-group.entity';
+import { PasskeyCredential } from '../auth/entities/passkey-credential.entity';
+import { OidcProvider } from '../oidc/entities/oidc-provider.entity';
+import { NexusBuild } from '../nexus/entities/nexus-build.entity';
+import { NexusToken } from '../nexus/entities/nexus-token.entity';
+import { ActiveConnection } from '../heartbeat/entities/active-connection.entity';
 import { resolveAssetPath } from '../../common/utils/runtime-paths';
 import {
   UpdateChannel,
@@ -43,12 +59,44 @@ export class UpdateCheckService implements OnModuleInit {
     private readonly settingRepository: Repository<SystemSetting>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(UserToken)
+    private readonly userTokenRepository: Repository<UserToken>,
+    @InjectRepository(Invitation)
+    private readonly invitationRepository: Repository<Invitation>,
     @InjectRepository(Peer)
     private readonly peerRepository: Repository<Peer>,
     @InjectRepository(DeviceGroup)
     private readonly deviceGroupRepository: Repository<DeviceGroup>,
+    @InjectRepository(DeviceGroupUserPermission)
+    private readonly deviceGroupPermissionRepository: Repository<DeviceGroupUserPermission>,
     @InjectRepository(ConnectionAudit)
     private readonly connectionAuditRepository: Repository<ConnectionAudit>,
+    @InjectRepository(FileAudit)
+    private readonly fileAuditRepository: Repository<FileAudit>,
+    @InjectRepository(AlarmAudit)
+    private readonly alarmAuditRepository: Repository<AlarmAudit>,
+    @InjectRepository(AddressBook)
+    private readonly addressBookRepository: Repository<AddressBook>,
+    @InjectRepository(AddressBookPeer)
+    private readonly addressBookPeerRepository: Repository<AddressBookPeer>,
+    @InjectRepository(AddressBookTag)
+    private readonly addressBookTagRepository: Repository<AddressBookTag>,
+    @InjectRepository(AddressBookRule)
+    private readonly addressBookRuleRepository: Repository<AddressBookRule>,
+    @InjectRepository(Strategy)
+    private readonly strategyRepository: Repository<Strategy>,
+    @InjectRepository(UserGroup)
+    private readonly userGroupRepository: Repository<UserGroup>,
+    @InjectRepository(PasskeyCredential)
+    private readonly passkeyCredentialRepository: Repository<PasskeyCredential>,
+    @InjectRepository(OidcProvider)
+    private readonly oidcProviderRepository: Repository<OidcProvider>,
+    @InjectRepository(NexusBuild)
+    private readonly nexusBuildRepository: Repository<NexusBuild>,
+    @InjectRepository(NexusToken)
+    private readonly nexusTokenRepository: Repository<NexusToken>,
+    @InjectRepository(ActiveConnection)
+    private readonly activeConnectionRepository: Repository<ActiveConnection>,
   ) {}
 
   async onModuleInit() {
@@ -324,53 +372,118 @@ export class UpdateCheckService implements OnModuleInit {
   }
 
   private async getStatistics() {
-    try {
-      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const emptyNexusBuildsByStatus = {
+      pending: 0,
+      building: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    };
 
-      const [
-        totalUsers,
-        adminUsers,
-        activeUsers7d,
-        totalDevices,
-        onlineDevices,
-        deviceGroups,
-        connections7d,
-      ] = await Promise.all([
-        this.userRepository.count(),
-        this.userRepository.count({ where: { isAdmin: true } }),
-        this.userRepository.count({
-          where: { updatedAt: Between(sevenDaysAgo, new Date()) },
-        }),
-        this.peerRepository.count(),
-        this.getOnlineDeviceCount(),
-        this.deviceGroupRepository.count(),
-        this.connectionAuditRepository.count({
-          where: { createdAt: Between(sevenDaysAgo, new Date()) },
-        }),
-      ]);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const now = new Date();
 
-      return {
-        users: {
-          total: totalUsers,
-          admins: adminUsers,
-          active_7d: activeUsers7d,
-        },
-        devices: {
-          total: totalDevices,
-          online: onlineDevices,
-          groups: deviceGroups,
-        },
-        connections: {
-          total_7d: connections7d,
-        },
-      };
-    } catch {
-      return {
-        users: { total: 0, admins: 0, active_7d: 0 },
-        devices: { total: 0, online: 0, groups: 0 },
-        connections: { total_7d: 0 },
-      };
-    }
+    const results = await Promise.allSettled([
+      this.userRepository.count(),
+      this.userRepository.count({ where: { isAdmin: true } }),
+      this.userRepository.count({
+        where: { updatedAt: Between(sevenDaysAgo, now) },
+      }),
+      this.userGroupRepository.count(),
+      this.peerRepository.count(),
+      this.getOnlineDeviceCount(),
+      this.deviceGroupRepository.count(),
+      this.deviceGroupPermissionRepository.count(),
+      this.activeConnectionRepository.count(),
+      this.connectionAuditRepository.count({
+        where: { createdAt: Between(sevenDaysAgo, now) },
+      }),
+      this.addressBookRepository.count(),
+      this.addressBookRepository.count({ where: { isPersonal: true } }),
+      this.addressBookRepository.count({ where: { isShared: true } }),
+      this.addressBookPeerRepository.count(),
+      this.addressBookTagRepository.count(),
+      this.addressBookRuleRepository.count(),
+      this.strategyRepository.count(),
+      this.passkeyCredentialRepository.count(),
+      this.userTokenRepository
+        .createQueryBuilder('token')
+        .where('token.isRevoked = :revoked', { revoked: false })
+        .andWhere('token.expiresAt > :now', { now })
+        .getCount(),
+      this.userTokenRepository.count({ where: { isRevoked: true } }),
+      this.invitationRepository
+        .createQueryBuilder('invitation')
+        .where('invitation.usedAt IS NULL')
+        .andWhere('invitation.expiresAt > :now', { now })
+        .getCount(),
+      this.invitationRepository
+        .createQueryBuilder('invitation')
+        .where('invitation.usedAt IS NOT NULL')
+        .getCount(),
+      this.oidcProviderRepository.count(),
+      this.oidcProviderRepository.count({ where: { enabled: true } }),
+      this.nexusBuildRepository.count(),
+      this.getNexusBuildsByStatus(),
+      this.nexusTokenRepository.count(),
+      this.fileAuditRepository.count({
+        where: { createdAt: Between(sevenDaysAgo, now) },
+      }),
+      this.alarmAuditRepository.count({
+        where: { createdAt: Between(sevenDaysAgo, now) },
+      }),
+    ]);
+
+    const value = <T>(index: number, fallback: T): T => {
+      const r = results[index];
+      return r.status === 'fulfilled' ? (r.value as T) : fallback;
+    };
+
+    return {
+      users: {
+        total: value(0, 0),
+        admins: value(1, 0),
+        active_7d: value(2, 0),
+        groups: value(3, 0),
+      },
+      devices: {
+        total: value(4, 0),
+        online: value(5, 0),
+        groups: value(6, 0),
+        group_permissions: value(7, 0),
+      },
+      connections: {
+        active: value(8, 0),
+        audited_7d: value(9, 0),
+      },
+      address_book: {
+        total: value(10, 0),
+        personal: value(11, 0),
+        shared: value(12, 0),
+        peers: value(13, 0),
+        tags: value(14, 0),
+        rules: value(15, 0),
+      },
+      strategy: { total: value(16, 0) },
+      auth: {
+        passkey_credentials: value(17, 0),
+        active_tokens: value(18, 0),
+        revoked_tokens: value(19, 0),
+        pending_invitations: value(20, 0),
+        used_invitations: value(21, 0),
+        oidc_providers: value(22, 0),
+        oidc_enabled_providers: value(23, 0),
+      },
+      nexus: {
+        builds_total: value(24, 0),
+        builds_by_status: value(25, emptyNexusBuildsByStatus),
+        tokens: value(26, 0),
+      },
+      audit: {
+        file_transfers_7d: value(27, 0),
+        alarms_7d: value(28, 0),
+      },
+    };
   }
 
   private async getOnlineDeviceCount(): Promise<number> {
@@ -380,6 +493,45 @@ export class UpdateCheckService implements OnModuleInit {
       .where('peer.lastHeartbeat >= :threshold', { threshold: oneMinuteAgo })
       .andWhere('peer.status = :status', { status: PeerStatus.ACTIVE })
       .getCount();
+  }
+
+  private async getNexusBuildsByStatus(): Promise<{
+    pending: number;
+    building: number;
+    completed: number;
+    failed: number;
+    cancelled: number;
+  }> {
+    const empty = {
+      pending: 0,
+      building: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    };
+    try {
+      const rows = await this.nexusBuildRepository
+        .createQueryBuilder('build')
+        .select('build.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .groupBy('build.status')
+        .getRawMany<{ status: string; count: string }>();
+
+      const map = new Map<string, number>();
+      for (const row of rows) {
+        map.set(row.status, Number(row.count));
+      }
+
+      return {
+        pending: map.get('pending') ?? 0,
+        building: map.get('building') ?? 0,
+        completed: map.get('completed') ?? 0,
+        failed: map.get('failed') ?? 0,
+        cancelled: map.get('cancelled') ?? 0,
+      };
+    } catch {
+      return empty;
+    }
   }
 
   /**
