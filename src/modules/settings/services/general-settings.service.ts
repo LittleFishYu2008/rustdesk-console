@@ -46,8 +46,7 @@ export class GeneralSettingsService {
       watermarkEnabled: this.readWatermarkEnabled(
         values.get(WATERMARK_ENABLED_KEY),
       ),
-      defaultLanguage:
-        values.get(DEFAULT_LANGUAGE_KEY) ?? DEFAULT_LANGUAGE,
+      defaultLanguage: values.get(DEFAULT_LANGUAGE_KEY) ?? DEFAULT_LANGUAGE,
       site: {
         frontendUrl: values.get(SITE_FRONTEND_URL_KEY) ?? DEFAULT_FRONTEND_URL,
         backendUrl: values.get(SITE_BACKEND_URL_KEY) ?? DEFAULT_BACKEND_URL,

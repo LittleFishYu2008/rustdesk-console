@@ -47,7 +47,8 @@ export class UpdateGeneralSettingsDto {
 
   @IsOptional()
   @Matches(LANGUAGE_KEY_PATTERN, {
-    message: 'defaultLanguage must be a BCP 47 region tag like en-US, pt-BR, zh-CN',
+    message:
+      'defaultLanguage must be a BCP 47 region tag like en-US, pt-BR, zh-CN',
   })
   defaultLanguage?: string;
 
