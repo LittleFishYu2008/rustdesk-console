@@ -108,6 +108,10 @@ jobs:
             os: ubuntu-24.04-arm
           - target: win-x64
             os: windows-latest
+          - target: macos-x64
+            os: macos-26-intel
+          - target: macos-arm64
+            os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout code
@@ -127,13 +131,13 @@ jobs:
       - name: Build SEA executable
         run: npm run build:sea
 
-      - name: Create archive (Linux)
-        if: runner.os == 'Linux'
+      - name: Create archive (tar.gz)
+        if: runner.os != 'Windows'
         run: |
           cd dist-sea
           tar czf ../rustdesk-console-${{ matrix.target }}.tar.gz .
 
-      - name: Create archive (Windows)
+      - name: Create archive (zip)
         if: runner.os == 'Windows'
         run: Compress-Archive -Path dist-sea/* -DestinationPath rustdesk-console-${{ matrix.target }}.zip
 
