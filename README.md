@@ -94,6 +94,8 @@ docker compose up -d
 
 That's it. The frontend is accessible at `http://localhost:21114`.
 
+Images are published to both Docker Hub (`databk/rustdesk-console`) and GitHub Container Registry (`ghcr.io/databk/rustdesk-console`) for `linux/amd64` and `linux/arm64`. To use the GitHub Container Registry mirror, replace `databk/rustdesk-console` with `ghcr.io/databk/rustdesk-console`.
+
 <details>
 <summary>📋 Docker CLI (without Compose)</summary>
 
@@ -116,6 +118,10 @@ docker run -d \
 ```
 
 </details>
+
+### Pre-built Binaries
+
+Each release ships standalone Single Executable Application (SEA) archives for Linux (x64/arm64), Windows (x64), and macOS (x64/arm64). Download the archive matching your platform from the [Releases page](https://github.com/databk/rustdesk-console/releases), extract it, and run the executable directly — no Node.js runtime required.
 
 <details>
 <summary>🔧 Build from Source</summary>
