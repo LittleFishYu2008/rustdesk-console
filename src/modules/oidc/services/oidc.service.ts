@@ -158,7 +158,11 @@ export class OidcService {
    * 获取所有启用的OIDC提供商
    * 返回可供用户选择的OIDC登录选项列表
    *
-   * @returns OIDC配置选项列表，格式为 "oidc/{provider_name}"
+   * 当所有提供商均为内置（无自定义 icon）时，使用简单的 oidc/{name} 格式
+   * 当存在自定义提供商（有 icon）时，使用 common-oidc/{json} 格式包含图标信息
+   * 客户端优先查找 common-oidc/ 前缀，未找到时回退到 oidc/ 前缀
+   *
+   * @returns OIDC配置选项列表
    */
   async getLoginOptions(): Promise<string[]> {
     const providers = await this.providerRepository.find({
@@ -166,13 +170,18 @@ export class OidcService {
       order: { priority: 'ASC' },
     });
 
-    const options: string[] = [];
+    const hasCustomIcon = providers.some((p) => p.icon);
 
-    for (const provider of providers) {
-      options.push(`oidc/${provider.name}`);
+    if (!hasCustomIcon) {
+      return providers.map((provider) => `oidc/${provider.name}`);
     }
 
-    return options;
+    const options = providers.map((provider) => ({
+      name: provider.name,
+      icon: provider.icon || null,
+    }));
+
+    return [`common-oidc/${JSON.stringify(options)}`];
   }
 
   /**
