@@ -65,8 +65,6 @@ export class HeartbeatService {
     );
 
     return {
-      code: 200,
-      message: '心跳接收成功',
       ...(disconnect.length > 0 ? { disconnect } : {}),
       ...(strategyResult
         ? {
@@ -74,10 +72,6 @@ export class HeartbeatService {
             modified_at: strategyResult.modified_at,
           }
         : {}),
-      data: {
-        timestamp: Date.now(),
-        device_id: data.id,
-      },
     };
   }
 
