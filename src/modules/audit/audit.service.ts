@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, FindOptionsWhere, In } from 'typeorm';
+import { Repository, FindOptionsWhere, In, QueryFailedError } from 'typeorm';
 import { ConnectionAudit, ConnType } from './entities/connection-audit.entity';
 import { FileAudit } from './entities/file-audit.entity';
 import { AlarmAudit } from './entities/alarm-audit.entity';
@@ -54,6 +54,7 @@ export class AuditService {
    * @returns 保存的连接审计记录
    */
   async auditConnection(dto: ConnectionAuditDto): Promise<ConnectionAudit> {
+
     // 判断是否为仅添加备注的请求（无 uuid 和 conn_id，有 session_id 和 note）
     if (!dto.uuid && dto.session_id !== undefined && dto.note !== undefined) {
       return this.addConnectionNote(dto);
@@ -187,6 +188,27 @@ export class AuditService {
     if (dto.type !== undefined && dto.type !== existingConnection.type) {
       existingConnection.type = dto.type;
     }
+    if (
+      dto.conn_audit_ref !== undefined &&
+      dto.conn_audit_ref !== existingConnection.connAuditRef
+    ) {
+      existingConnection.connAuditRef = dto.conn_audit_ref || null;
+    }
+    if (
+      dto.primary_auth !== undefined &&
+      dto.primary_auth !== existingConnection.primaryAuth
+    ) {
+      existingConnection.primaryAuth = dto.primary_auth;
+    }
+    if (
+      dto.two_factor !== undefined &&
+      dto.two_factor !== existingConnection.twoFactor
+    ) {
+      existingConnection.twoFactor = dto.two_factor;
+    }
+    if (dto.nonce && dto.nonce !== existingConnection.nonce) {
+      existingConnection.nonce = dto.nonce;
+    }
     existingConnection.action = action;
     return await this.connectionAuditRepository.save(existingConnection);
   }
@@ -213,6 +235,10 @@ export class AuditService {
       requestedAt: action === 'open' ? new Date() : null,
       establishedAt: action === 'established' ? new Date() : null,
       closedAt: action === 'close' ? new Date() : null,
+      nonce: dto.nonce || null,
+      connAuditRef: dto.conn_audit_ref || null,
+      primaryAuth: dto.primary_auth ?? null,
+      twoFactor: dto.two_factor ?? null,
     });
 
     return await this.connectionAuditRepository.save(connectionAudit);
@@ -226,6 +252,16 @@ export class AuditService {
    * @returns 保存的文件审计记录
    */
   async auditFile(dto: FileAuditDto): Promise<FileAudit> {
+    // nonce 去重：先查已有记录（加 deviceId 防止跨设备误匹配）
+    if (dto.nonce) {
+      const existing = await this.fileAuditRepository.findOne({
+        where: { deviceId: dto.id, nonce: dto.nonce },
+      });
+      if (existing) {
+        return existing;
+      }
+    }
+
     // 解析 info JSON 字符串
     let info: {
       ip: string;
@@ -243,6 +279,7 @@ export class AuditService {
       deviceId: dto.id,
       deviceUuid: dto.uuid,
       peerId: dto.peer_id || '',
+      connId: dto.conn_id != null ? String(dto.conn_id) : null,
       type: dto.type !== undefined ? dto.type : 0,
       path: dto.path || null,
       isFile: dto.is_file || false,
@@ -250,9 +287,23 @@ export class AuditService {
       clientName: info.name || '',
       fileCount: info.num || 0,
       files: info.files?.slice(0, 10) || [],
+      nonce: dto.nonce || null,
     });
 
-    return await this.fileAuditRepository.save(fileAudit);
+    try {
+      return await this.fileAuditRepository.save(fileAudit);
+    } catch (err) {
+      // 并发时唯一索引冲突，重新查询并返回已有记录
+      if (dto.nonce && this.isUniqueConstraintError(err)) {
+        const existing = await this.fileAuditRepository.findOne({
+          where: { deviceId: dto.id, nonce: dto.nonce },
+        });
+        if (existing) {
+          return existing;
+        }
+      }
+      throw err;
+    }
   }
 
   /**
@@ -263,6 +314,16 @@ export class AuditService {
    * @returns 保存的告警审计记录
    */
   async auditAlarm(dto: AlarmAuditDto): Promise<AlarmAudit> {
+    // nonce 去重：先查已有记录（加 deviceId 防止跨设备误匹配）
+    if (dto.nonce) {
+      const existing = await this.alarmAuditRepository.findOne({
+        where: { deviceId: dto.id, nonce: dto.nonce },
+      });
+      if (existing) {
+        return existing;
+      }
+    }
+
     // 解析 info JSON 字符串
     let info: { id?: string; ip: string; name?: string };
     try {
@@ -278,9 +339,25 @@ export class AuditService {
       infoId: info.id || null,
       infoIp: info.ip || '',
       infoName: info.name || null,
+      connId: dto.conn_id != null ? String(dto.conn_id) : null,
+      nonce: dto.nonce || null,
+      connAuditRef: dto.conn_audit_ref || null,
     });
 
-    return await this.alarmAuditRepository.save(alarmAudit);
+    try {
+      return await this.alarmAuditRepository.save(alarmAudit);
+    } catch (err) {
+      // 并发时唯一索引冲突，重新查询并返回已有记录
+      if (dto.nonce && this.isUniqueConstraintError(err)) {
+        const existing = await this.alarmAuditRepository.findOne({
+          where: { deviceId: dto.id, nonce: dto.nonce },
+        });
+        if (existing) {
+          return existing;
+        }
+      }
+      throw err;
+    }
   }
 
   /**
@@ -316,6 +393,7 @@ export class AuditService {
         'ca.deviceId',
         'ca.deviceUuid',
         'ca.connId',
+        'ca.sessionId',
         'ca.ip',
         'ca.action',
         'ca.peerId',
@@ -325,6 +403,9 @@ export class AuditService {
         'ca.requestedAt',
         'ca.establishedAt',
         'ca.closedAt',
+        'ca.connAuditRef',
+        'ca.primaryAuth',
+        'ca.twoFactor',
         'ca.createdAt',
       ]);
 
@@ -500,6 +581,7 @@ export class AuditService {
         'fa.deviceId',
         'fa.deviceUuid',
         'fa.peerId',
+        'fa.connId',
         'fa.type',
         'fa.path',
         'fa.isFile',
@@ -575,6 +657,8 @@ export class AuditService {
         'aa.infoId',
         'aa.infoIp',
         'aa.infoName',
+        'aa.connId',
+        'aa.connAuditRef',
         'aa.createdAt',
       ]);
 
@@ -622,5 +706,28 @@ export class AuditService {
     created_at?: string;
   }) {
     return this.rbacAuditService.query(filters);
+  }
+
+  private isUniqueConstraintError(error: unknown): boolean {
+    if (!(error instanceof QueryFailedError)) {
+      return false;
+    }
+    // SQLite: "UNIQUE constraint failed: ..."
+    if (error.message.toUpperCase().includes('UNIQUE')) {
+      return true;
+    }
+    const driverError = error as QueryFailedError & {
+      code?: string;
+      errno?: number;
+    };
+    // MySQL: ER_DUP_ENTRY (errno 1062)
+    if (driverError.code === 'ER_DUP_ENTRY' || driverError.errno === 1062) {
+      return true;
+    }
+    // PostgreSQL: unique_violation (SQLSTATE 23505)
+    if (driverError.code === '23505') {
+      return true;
+    }
+    return false;
   }
 }
