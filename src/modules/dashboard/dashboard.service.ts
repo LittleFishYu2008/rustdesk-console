@@ -4,26 +4,20 @@ import { Repository, Between } from 'typeorm';
 import { promises as fs, type StatsFs } from 'fs';
 import * as os from 'os';
 import * as si from 'systeminformation';
-import { User, UserStatus } from '../user/entities/user.entity';
+import { User } from '../user/entities/user.entity';
 import { Peer, PeerStatus } from '../../common/entities/peer.entity';
 import { DeviceGroup } from '../device-group/entities/device-group.entity';
 import { ConnectionAudit } from '../audit/entities/connection-audit.entity';
 import { FileAudit } from '../audit/entities/file-audit.entity';
 import { AlarmAudit } from '../audit/entities/alarm-audit.entity';
 import { Sysinfo } from '../../common/entities/sysinfo.entity';
+import { AddressBook } from '../address-book/entities/address-book.entity';
+import { UserGroup } from '../user-group/entities/user-group.entity';
+import { Role } from '../rbac/entities/role.entity';
+import { Strategy } from '../strategy/entities/strategy.entity';
 import { getDbPath } from '../../common/utils/data-dir.util';
-import {
-  DashboardOverviewDto,
-  DashboardStatisticsDto,
-  DashboardTrendsDto,
-  DashboardRealtimeDto,
-  SystemStatusDto,
-} from './dto/dashboard-overview.dto';
+import { DashboardDataDto, DashboardTrendsDto } from './dto/dashboard-overview.dto';
 
-/**
- * Dashboard 服务
- * 提供数据统计和分析功能
- */
 @Injectable()
 export class DashboardService {
   constructor(
@@ -41,52 +35,52 @@ export class DashboardService {
     private readonly alarmAuditRepository: Repository<AlarmAudit>,
     @InjectRepository(Sysinfo)
     private readonly sysinfoRepository: Repository<Sysinfo>,
+    @InjectRepository(AddressBook)
+    private readonly addressBookRepository: Repository<AddressBook>,
+    @InjectRepository(UserGroup)
+    private readonly userGroupRepository: Repository<UserGroup>,
+    @InjectRepository(Role)
+    private readonly roleRepository: Repository<Role>,
+    @InjectRepository(Strategy)
+    private readonly strategyRepository: Repository<Strategy>,
   ) {}
 
-  /**
-   * 获取总览数据
-   */
-  async getOverview(): Promise<DashboardOverviewDto> {
+  async getDashboard(): Promise<DashboardDataDto> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // 用户统计
-    const userTotal = await this.userRepository.count();
-    const userActive = await this.userRepository.count({
-      where: { status: UserStatus.ACTIVE },
-    });
-    // TODO: 实现在线用户统计（需要心跳或会话管理）
-    const userOnline = 0;
-    const newUsersToday = await this.userRepository.count({
-      where: {
-        createdAt: Between(today, new Date()),
-      },
-    });
+    const [
+      userTotal,
+      adminCount,
+      newUsersToday,
+      deviceTotal,
+      deviceOnline,
+      connectionsToday,
+      fileTransfersToday,
+      addressBooksCount,
+      userGroupsCount,
+      deviceGroupsCount,
+      rolesCount,
+      strategiesCount,
+    ] = await Promise.all([
+      this.userRepository.count(),
+      this.userRepository.count({ where: { isAdmin: true } }),
+      this.userRepository.count({ where: { createdAt: Between(today, new Date()) } }),
+      this.peerRepository.count(),
+      this.peerRepository
+        .createQueryBuilder('peer')
+        .where('peer.lastHeartbeat >= :threshold', { threshold: new Date(Date.now() - 60 * 1000) })
+        .andWhere('peer.status = :status', { status: PeerStatus.ACTIVE })
+        .getCount(),
+      this.connectionAuditRepository.count({ where: { createdAt: Between(today, new Date()) } }),
+      this.fileAuditRepository.count({ where: { createdAt: Between(today, new Date()) } }),
+      this.addressBookRepository.count(),
+      this.userGroupRepository.count(),
+      this.deviceGroupRepository.count(),
+      this.roleRepository.count(),
+      this.strategyRepository.count(),
+    ]);
 
-    // 设备统计
-    const deviceTotal = await this.peerRepository.count();
-    const _deviceActive = await this.peerRepository.count({
-      where: { status: PeerStatus.ACTIVE },
-    });
-
-    // 在线设备统计：最近1分钟内有心跳的设备
-    const oneMinuteAgo = new Date(Date.now() - 60 * 1000);
-    const deviceOnline = await this.peerRepository
-      .createQueryBuilder('peer')
-      .where('peer.lastHeartbeat >= :threshold', { threshold: oneMinuteAgo })
-      .andWhere('peer.status = :status', { status: PeerStatus.ACTIVE })
-      .getCount();
-
-    const deviceGroups = await this.deviceGroupRepository.count();
-
-    // 连接统计
-    const connectionsToday = await this.connectionAuditRepository.count({
-      where: {
-        createdAt: Between(today, new Date()),
-      },
-    });
-
-    // 计算平均连接时长
     const todayConnections = await this.connectionAuditRepository
       .createQueryBuilder('conn')
       .where('conn.createdAt >= :today', { today })
@@ -94,391 +88,82 @@ export class DashboardService {
       .andWhere('conn.establishedAt IS NOT NULL')
       .getMany();
 
-    let totalDuration = 0;
-    let connectionCount = 0;
+    let successCount = 0;
     todayConnections.forEach((conn) => {
       if (conn.closedAt && conn.establishedAt) {
-        const duration =
-          (conn.closedAt.getTime() - conn.establishedAt.getTime()) / 1000 / 60; // 分钟
-        totalDuration += duration;
-        connectionCount++;
+        successCount++;
       }
     });
-    const avgDuration =
-      connectionCount > 0 ? totalDuration / connectionCount : 0;
 
-    // TODO: 实现活跃连接统计（需要实时连接管理）
-    const activeConnections = 0;
+    const failureCount = await this.connectionAuditRepository
+      .createQueryBuilder('conn')
+      .where('conn.createdAt >= :today', { today })
+      .andWhere('conn.establishedAt IS NULL')
+      .andWhere('conn.closedAt IS NOT NULL')
+      .getCount();
 
-    // 审计统计
-    const totalAlarms = await this.alarmAuditRepository.count();
-    // TODO: 需要在 AlarmAudit 实体中添加 isRead 和 level 字段
-    const unreadAlarms = 0;
-    const criticalAlarms = 0;
-
-    // 文件传输统计
-    const fileTransfers = await this.fileAuditRepository.count({
-      where: {
-        createdAt: Between(today, new Date()),
-      },
+    const todayFileTransfers = await this.fileAuditRepository.find({
+      where: { createdAt: Between(today, new Date()) },
+    });
+    let uploadToday = 0;
+    let downloadToday = 0;
+    todayFileTransfers.forEach((file) => {
+      if (file.type === 0) uploadToday++;
+      else if (file.type === 1) downloadToday++;
     });
 
-    const fileRecords = await this.fileAuditRepository
-      .createQueryBuilder('file')
-      .where('file.createdAt >= :today', { today })
-      .getMany();
-
-    let totalFileSize = 0;
-    fileRecords.forEach((file) => {
-      // 计算文件总大小
-      try {
-        if (file.files) {
-          // 处理可能的字符串格式(JSON字符串)
-          let filesArray: unknown = file.files;
-          if (typeof file.files === 'string') {
-            filesArray = JSON.parse(file.files) as unknown[];
-          }
-
-          if (Array.isArray(filesArray)) {
-            filesArray.forEach((item: unknown) => {
-              if (Array.isArray(item) && item.length >= 2) {
-                const size: unknown = item[1];
-                totalFileSize += typeof size === 'number' ? size : 0;
-              }
-            });
-          }
-        }
-      } catch {
-        // 解析失败,跳过此文件
-      }
-    });
+    const systemStatus = await this.getSystemStatus();
 
     return {
       users: {
         total: userTotal,
-        active: userActive,
-        online: userOnline,
+        admin: adminCount,
+        normal: userTotal - adminCount,
         newToday: newUsersToday,
       },
       devices: {
         total: deviceTotal,
         online: deviceOnline,
         offline: deviceTotal - deviceOnline,
-        groups: deviceGroups,
       },
       connections: {
-        active: activeConnections,
         today: connectionsToday,
-        avgDuration: Math.round(avgDuration * 10) / 10,
-      },
-      audits: {
-        alarms: totalAlarms,
-        unreadAlarms,
-        criticalAlarms,
-      },
-      files: {
-        transferred: fileTransfers,
-        totalSize: this.formatFileSize(totalFileSize),
-      },
-    };
-  }
-
-  /**
-   * 获取统计数据
-   */
-  async getStatistics(): Promise<DashboardStatisticsDto> {
-    // 用户分布
-    const adminCount = await this.userRepository.count({
-      where: { isAdmin: true },
-    });
-    const normalUserCount = await this.userRepository.count({
-      where: { isAdmin: false },
-    });
-
-    const activeUsers = await this.userRepository.count({
-      where: { status: UserStatus.ACTIVE },
-    });
-    const inactiveUsers = await this.userRepository.count({
-      where: { status: UserStatus.DISABLED },
-    });
-    const unverifiedUsers = await this.userRepository.count({
-      where: { status: UserStatus.UNVERIFIED },
-    });
-
-    // 设备分布
-    const deviceGroups = await this.deviceGroupRepository.find({
-      relations: ['peers'],
-    });
-    const deviceByGroup = deviceGroups.map((group) => ({
-      groupId: group.guid,
-      groupName: group.name,
-      count: group.peers ? group.peers.length : 0,
-    }));
-
-    // 在线设备统计：最近5分钟内有心跳的设备
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
-    const onlineDevices = await this.peerRepository
-      .createQueryBuilder('peer')
-      .where('peer.updatedAt >= :threshold', { threshold: fiveMinutesAgo })
-      .andWhere('peer.status = :status', { status: PeerStatus.ACTIVE })
-      .getCount();
-
-    const totalDevices = await this.peerRepository.count();
-
-    // 连接分析
-    const allConnections = await this.connectionAuditRepository
-      .createQueryBuilder('conn')
-      .where('conn.closedAt IS NOT NULL')
-      .andWhere('conn.establishedAt IS NOT NULL')
-      .getMany();
-
-    let totalDuration = 0;
-    let successCount = 0;
-    let failureCount = 0;
-
-    allConnections.forEach((conn) => {
-      if (conn.closedAt && conn.establishedAt) {
-        const duration =
-          (conn.closedAt.getTime() - conn.establishedAt.getTime()) / 1000 / 60;
-        totalDuration += duration;
-        successCount++;
-      }
-    });
-
-    // 统计失败的连接（没有 establishedAt 但有 closedAt）
-    const failedConnections = await this.connectionAuditRepository
-      .createQueryBuilder('conn')
-      .where('conn.establishedAt IS NULL')
-      .getCount();
-    failureCount = failedConnections;
-
-    const totalConnections = successCount + failureCount;
-    const successRate =
-      totalConnections > 0 ? (successCount / totalConnections) * 100 : 0;
-
-    // 文件传输统计
-    const allFileTransfers = await this.fileAuditRepository.find();
-    let totalFilesSize = 0;
-    let uploadCount = 0;
-    let downloadCount = 0;
-
-    allFileTransfers.forEach((file) => {
-      // 计算文件总大小
-      try {
-        if (file.files) {
-          // 处理可能的字符串格式(JSON字符串)
-          let filesArray: unknown = file.files;
-          if (typeof file.files === 'string') {
-            filesArray = JSON.parse(file.files) as unknown[];
-          }
-
-          if (Array.isArray(filesArray)) {
-            filesArray.forEach((item: unknown) => {
-              if (Array.isArray(item) && item.length >= 2) {
-                const size: unknown = item[1];
-                totalFilesSize += typeof size === 'number' ? size : 0;
-              }
-            });
-          }
-        }
-      } catch {
-        // 解析失败,跳过此文件
-      }
-
-      // 根据类型统计上传/下载
-      if (file.type === 0) {
-        uploadCount++;
-      } else if (file.type === 1) {
-        downloadCount++;
-      }
-    });
-
-    return {
-      userDistribution: {
-        byRole: {
-          admin: adminCount,
-          user: normalUserCount,
-        },
-        byStatus: {
-          active: activeUsers,
-          inactive: inactiveUsers,
-          disabled: inactiveUsers,
-          unverified: unverifiedUsers,
-        },
-      },
-      deviceDistribution: {
-        byGroup: deviceByGroup,
-        byStatus: {
-          online: onlineDevices,
-          offline: totalDevices - onlineDevices,
-        },
-      },
-      connectionAnalysis: {
-        avgDuration:
-          successCount > 0
-            ? Math.round((totalDuration / successCount) * 10) / 10
-            : 0,
-        totalDuration: Math.round(totalDuration),
-        successRate: Math.round(successRate * 10) / 10,
+        successCount,
         failureCount,
       },
-      fileTransfer: {
-        totalFiles: allFileTransfers.length,
-        totalSize: totalFilesSize,
-        uploadCount,
-        downloadCount,
+      files: {
+        transferredToday: fileTransfersToday,
+        uploadToday,
+        downloadToday,
       },
+      counts: {
+        addressBooks: addressBooksCount,
+        userGroups: userGroupsCount,
+        deviceGroups: deviceGroupsCount,
+        roles: rolesCount,
+        strategies: strategiesCount,
+      },
+      systemStatus,
     };
   }
 
-  /**
-   * 获取趋势数据
-   */
-  async getTrends(
-    range: string = '7d',
-    metric: string = 'all',
-  ): Promise<DashboardTrendsDto> {
+  async getTrends(range: string = '7d'): Promise<DashboardTrendsDto> {
     const days = this.parseRange(range);
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     startDate.setHours(0, 0, 0, 0);
 
-    const result: DashboardTrendsDto = {};
+    const [connectionTrend, userActiveTrend, alarmTrend] = await Promise.all([
+      this.getConnectionTrend(startDate, days),
+      this.getUserNewTrend(startDate, days),
+      this.getAlarmTrend(startDate, days),
+    ]);
 
-    // 连接趋势
-    if (metric === 'all' || metric === 'connection') {
-      result.connectionTrend = await this.getConnectionTrend(startDate, days);
-    }
-
-    // 用户活跃趋势
-    if (metric === 'all' || metric === 'user') {
-      result.userActiveTrend = await this.getUserActiveTrend(startDate, days);
-    }
-
-    // 告警趋势
-    if (metric === 'all' || metric === 'alarm') {
-      result.alarmTrend = await this.getAlarmTrend(startDate, days);
-    }
-
-    return result;
+    return { connectionTrend, userActiveTrend, alarmTrend };
   }
 
-  /**
-   * 获取实时数据
-   */
-  async getRealtime(): Promise<DashboardRealtimeDto> {
-    // 获取最近 10 条活跃连接
-    const recentConnections = await this.connectionAuditRepository.find({
-      order: { createdAt: 'DESC' },
-      take: 10,
-    });
-
-    // 获取最近事件
-    const recentConnectionEvents = await this.connectionAuditRepository.find({
-      order: { createdAt: 'DESC' },
-      take: 5,
-    });
-
-    const recentFileEvents = await this.fileAuditRepository.find({
-      order: { createdAt: 'DESC' },
-      take: 5,
-    });
-
-    const recentAlarmEvents = await this.alarmAuditRepository.find({
-      order: { createdAt: 'DESC' },
-      take: 5,
-    });
-
-    // 收集所有涉及的 deviceUuid，批量查询 peers 表获取 uuid -> id 映射
-    const allDeviceUuids = new Set<string>();
-    recentConnections.forEach((conn) => allDeviceUuids.add(conn.deviceUuid));
-    recentConnectionEvents.forEach((e) => allDeviceUuids.add(e.deviceUuid));
-    recentAlarmEvents.forEach((e) => allDeviceUuids.add(e.deviceUuid));
-
-    const uuidToIdMap = new Map<string, string>();
-    const uuidToHostnameMap = new Map<string, string>();
-    if (allDeviceUuids.size > 0) {
-      const peers = await this.peerRepository
-        .createQueryBuilder('peer')
-        .where('peer.uuid IN (:...uuids)', {
-          uuids: Array.from(allDeviceUuids),
-        })
-        .getMany();
-      peers.forEach((peer) => uuidToIdMap.set(peer.uuid, peer.id));
-
-      const sysinfos = await this.sysinfoRepository
-        .createQueryBuilder('sysinfo')
-        .where('sysinfo.uuid IN (:...uuids)', {
-          uuids: Array.from(allDeviceUuids),
-        })
-        .getMany();
-      sysinfos.forEach((s) => {
-        if (s.hostname) uuidToHostnameMap.set(s.uuid, s.hostname);
-      });
-    }
-
-    const activeConnections = recentConnections.map((conn) => ({
-      id: conn.id.toString(),
-      userId: conn.peerId || 'unknown',
-      userName: conn.peerName || 'unknown',
-      deviceId: uuidToIdMap.get(conn.deviceUuid) || conn.deviceId,
-      deviceName: uuidToHostnameMap.get(conn.deviceUuid) || conn.deviceUuid,
-      startTime: conn.establishedAt || conn.createdAt,
-      duration:
-        conn.closedAt && conn.establishedAt
-          ? Math.round(
-              (conn.closedAt.getTime() - conn.establishedAt.getTime()) /
-                1000 /
-                60,
-            )
-          : 0,
-    }));
-
-    const recentEvents = [
-      ...recentConnectionEvents.map((e) => ({
-        type: 'connection' as const,
-        action: e.action,
-        user: e.peerName || 'unknown',
-        target: uuidToIdMap.get(e.deviceUuid) || e.deviceId,
-        timestamp: e.createdAt,
-        status: 'success' as const,
-      })),
-      ...recentFileEvents.map((e) => ({
-        type: 'file' as const,
-        action: e.type === 0 ? 'send' : 'receive',
-        user: e.clientName || 'unknown',
-        target: e.path || 'unknown',
-        timestamp: e.createdAt,
-        status: 'success' as const,
-      })),
-      ...recentAlarmEvents.map((e) => ({
-        type: 'alarm' as const,
-        action: 'alarm',
-        user: uuidToIdMap.get(e.deviceUuid) || e.deviceId || 'system',
-        target: e.infoName || 'alarm',
-        timestamp: e.createdAt,
-        status: 'warning' as const,
-      })),
-    ]
-      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-      .slice(0, 10);
-
-    // 系统状态（真实数据）
-    const systemStatus = await this.getSystemStatus();
-
-    return {
-      activeConnections,
-      recentEvents,
-      systemStatus,
-    };
-  }
-
-  /**
-   * 获取连接趋势
-   */
   private async getConnectionTrend(startDate: Date, days: number) {
-    const trend: Array<{ date: string; count: number; avgDuration: number }> =
-      [];
+    const trend: Array<{ date: string; count: number }> = [];
     for (let i = 0; i < days; i++) {
       const date = new Date(startDate);
       date.setDate(date.getDate() + i);
@@ -486,50 +171,19 @@ export class DashboardService {
       nextDate.setDate(nextDate.getDate() + 1);
 
       const count = await this.connectionAuditRepository.count({
-        where: {
-          createdAt: Between(date, nextDate),
-        },
-      });
-
-      const connections = await this.connectionAuditRepository
-        .createQueryBuilder('conn')
-        .where('conn.createdAt >= :start', { start: date })
-        .andWhere('conn.createdAt < :end', { end: nextDate })
-        .andWhere('conn.closedAt IS NOT NULL')
-        .andWhere('conn.establishedAt IS NOT NULL')
-        .getMany();
-
-      let totalDuration = 0;
-      connections.forEach((conn) => {
-        if (conn.closedAt && conn.establishedAt) {
-          totalDuration +=
-            (conn.closedAt.getTime() - conn.establishedAt.getTime()) /
-            1000 /
-            60;
-        }
+        where: { createdAt: Between(date, nextDate) },
       });
 
       trend.push({
         date: date.toISOString().split('T')[0],
         count,
-        avgDuration:
-          connections.length > 0
-            ? Math.round((totalDuration / connections.length) * 10) / 10
-            : 0,
       });
     }
     return trend;
   }
 
-  /**
-   * 获取用户活跃趋势
-   */
-  private async getUserActiveTrend(startDate: Date, days: number) {
-    const trend: Array<{
-      date: string;
-      newUsers: number;
-      activeUsers: number;
-    }> = [];
+  private async getUserNewTrend(startDate: Date, days: number) {
+    const trend: Array<{ date: string; newUsers: number }> = [];
     for (let i = 0; i < days; i++) {
       const date = new Date(startDate);
       date.setDate(date.getDate() + i);
@@ -537,61 +191,37 @@ export class DashboardService {
       nextDate.setDate(nextDate.getDate() + 1);
 
       const newUsers = await this.userRepository.count({
-        where: {
-          createdAt: Between(date, nextDate),
-        },
-      });
-
-      // 活跃用户（简化处理，实际应根据登录记录）
-      const activeUsers = await this.userRepository.count({
-        where: { status: UserStatus.ACTIVE },
+        where: { createdAt: Between(date, nextDate) },
       });
 
       trend.push({
         date: date.toISOString().split('T')[0],
         newUsers,
-        activeUsers,
       });
     }
     return trend;
   }
 
-  /**
-   * 获取告警趋势
-   */
   private async getAlarmTrend(startDate: Date, days: number) {
-    const trend: Array<{
-      date: string;
-      critical: number;
-      warning: number;
-      info: number;
-    }> = [];
+    const trend: Array<{ date: string; info: number }> = [];
     for (let i = 0; i < days; i++) {
       const date = new Date(startDate);
       date.setDate(date.getDate() + i);
       const nextDate = new Date(date);
       nextDate.setDate(nextDate.getDate() + 1);
 
-      // TODO: 需要在 AlarmAudit 实体中添加 level 字段
       const total = await this.alarmAuditRepository.count({
-        where: {
-          createdAt: Between(date, nextDate),
-        },
+        where: { createdAt: Between(date, nextDate) },
       });
 
       trend.push({
         date: date.toISOString().split('T')[0],
-        critical: 0,
-        warning: 0,
         info: total,
       });
     }
     return trend;
   }
 
-  /**
-   * 解析时间范围
-   */
   private parseRange(range: string): number {
     switch (range) {
       case '7d':
@@ -605,25 +235,13 @@ export class DashboardService {
     }
   }
 
-  /**
-   * 格式化文件大小
-   */
-  private formatFileSize(bytes: number): string {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
-  }
-
-  private async getSystemStatus(): Promise<SystemStatusDto> {
+  private async getSystemStatus() {
     const databasePath = getDbPath();
-    const [cpuResult, memoryResult, filesystemResult] =
-      await Promise.allSettled([
-        si.currentLoad(),
-        si.mem(),
-        fs.statfs(databasePath),
-      ] as const);
+    const [cpuResult, memoryResult, filesystemResult] = await Promise.allSettled([
+      si.currentLoad(),
+      si.mem(),
+      fs.statfs(databasePath),
+    ] as const);
 
     return {
       cpu:
@@ -633,9 +251,7 @@ export class DashboardService {
       memory:
         memoryResult.status === 'fulfilled' && memoryResult.value.total > 0
           ? this.roundPercentage(
-              ((memoryResult.value.total - memoryResult.value.available) /
-                memoryResult.value.total) *
-                100,
+              ((memoryResult.value.total - memoryResult.value.available) / memoryResult.value.total) * 100,
             )
           : null,
       disk:
@@ -648,7 +264,6 @@ export class DashboardService {
 
   private getDiskUsage(filesystem: StatsFs): number | null {
     if (filesystem.blocks <= 0) return null;
-
     return this.roundPercentage(
       ((filesystem.blocks - filesystem.bfree) / filesystem.blocks) * 100,
     );
@@ -656,7 +271,6 @@ export class DashboardService {
 
   private roundPercentage(value: number | undefined): number | null {
     if (value === undefined || !Number.isFinite(value)) return null;
-
     return Math.round(Math.min(100, Math.max(0, value)) * 10) / 10;
   }
 
