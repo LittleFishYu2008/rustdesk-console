@@ -3,7 +3,6 @@ export class DashboardDataDto {
     total: number;
     admin: number;
     normal: number;
-    newToday: number;
   };
 
   devices: {
@@ -45,13 +44,13 @@ export class DashboardTrendsDto {
     count: number;
   }>;
 
-  userActiveTrend?: Array<{
+  newUserTrend?: Array<{
     date: string;
     newUsers: number;
   }>;
 
   alarmTrend?: Array<{
     date: string;
-    info: number;
+    count: number;
   }>;
 }
