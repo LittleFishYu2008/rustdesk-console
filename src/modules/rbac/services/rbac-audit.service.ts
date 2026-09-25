@@ -23,6 +23,9 @@ interface ConsoleAuditQueryRaw {
   actor_user_name?: string | null;
 }
 
+const SENSITIVE_STATE_KEY =
+  /(password|pass(word)?|token|secret|verifier|credential|authorization|api[_-]?key|private[_-]?key|current[_-]?code|tfa[_-]?code|verification[_-]?code|otp[_-]?code|recovery[_-]?code|^code$)/i;
+
 @Injectable()
 export class RbacAuditService {
   private readonly logger = new Logger(RbacAuditService.name);
@@ -63,9 +66,13 @@ export class RbacAuditService {
 
   async query(filters: {
     operator?: string;
+    action?: string;
+    targetType?: string;
+    result?: 'allowed' | 'denied';
     pageSize?: number;
     current?: number;
-    created_at?: string;
+    startTime?: string;
+    endTime?: string;
   }): Promise<{ data: Record<string, unknown>[]; total: number }> {
     const pageSize = this.boundPageSize(filters.pageSize);
     const current = this.boundCurrent(filters.current);
@@ -78,12 +85,26 @@ export class RbacAuditService {
         operator: `%${filters.operator}%`,
       });
     }
-    if (filters.created_at) {
-      const createdAt = new Date(filters.created_at);
-      if (Number.isNaN(createdAt.getTime())) {
-        throw new BadRequestException('created_at 不是有效的日期字符串');
-      }
-      query.andWhere('audit.createdAt >= :createdAt', { createdAt });
+    if (filters.action) {
+      query.andWhere('audit.action LIKE :action', {
+        action: `%${filters.action}%`,
+      });
+    }
+    if (filters.targetType) {
+      query.andWhere('audit.targetType = :targetType', {
+        targetType: filters.targetType,
+      });
+    }
+    if (filters.result) {
+      query.andWhere('audit.result = :result', { result: filters.result });
+    }
+    const startTime = this.parseDate(filters.startTime, 'start_time');
+    const endTime = this.parseDate(filters.endTime, 'end_time');
+    if (startTime) {
+      query.andWhere('audit.createdAt >= :startTime', { startTime });
+    }
+    if (endTime) {
+      query.andWhere('audit.createdAt <= :endTime', { endTime });
     }
     const total = await query.getCount();
     const { entities: rows, raw } = await query
@@ -137,9 +158,7 @@ export class RbacAuditService {
     if (value instanceof Date) return value.toJSON();
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
-      if (
-        /(password|token|secret|verifier|credential|authorization)/i.test(key)
-      ) {
+      if (SENSITIVE_STATE_KEY.test(key)) {
         result[key] = '[REDACTED]';
       } else {
         result[key] = this.redact(item);
@@ -161,5 +180,26 @@ export class RbacAuditService {
     if (value === undefined || value === null) return DEFAULT_CURRENT;
     if (!Number.isFinite(value) || value <= 0) return DEFAULT_CURRENT;
     return Math.floor(value);
+  }
+
+  private parseDate(
+    value: string | undefined,
+    field: string,
+  ): Date | undefined {
+    if (!value) return undefined;
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    if (!isDateOnly && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) {
+      throw new BadRequestException(
+        `${field} 必须包含 UTC 标识（Z）或时区偏移量`,
+      );
+    }
+    const parsed = new Date(isDateOnly ? `${value}T00:00:00.000Z` : value);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(`${field} 不是有效的日期字符串`);
+    }
+    if (isDateOnly && parsed.toISOString().slice(0, 10) !== value) {
+      throw new BadRequestException(`${field} 不是有效的日期字符串`);
+    }
+    return parsed;
   }
 }

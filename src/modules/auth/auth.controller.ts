@@ -7,6 +7,7 @@ import {
   Param,
   HttpCode,
   HttpStatus,
+  Logger,
   Req,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
@@ -31,14 +32,19 @@ import { Public } from './decorators/public.decorator';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { extractBearerToken } from './auth.utils';
 import type { Request } from 'express';
+import { RbacAuditService } from '../rbac/services/rbac-audit.service';
+import { SkipConsoleAudit } from '../rbac/decorators/skip-console-audit.decorator';
 
 @Controller()
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private readonly authService: AuthService,
     private readonly tfaService: AuthTfaService,
     private readonly passkeyService: AuthPasskeyService,
     private readonly tokenService: AuthTokenService,
+    private readonly auditService: RbacAuditService,
   ) {}
 
   @Public()
@@ -46,7 +52,32 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   async login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto);
+    let response: Awaited<ReturnType<AuthService['login']>>;
+    try {
+      response = await this.authService.login(loginDto);
+    } catch (error: unknown) {
+      await this.auditService.recordDenied({
+        targetType: 'auth',
+        action: 'auth.login',
+        reason: error instanceof Error ? error.message : String(error),
+        afterState: { username: loginDto.username, login_type: loginDto.type },
+      });
+      throw error;
+    }
+    try {
+      await this.auditService.record({
+        actorUserGuid: response.user?.guid ?? null,
+        targetType: 'auth',
+        targetGuid: response.user?.guid ?? null,
+        action: 'auth.login',
+        result: 'allowed',
+        afterState: { username: loginDto.username, login_type: loginDto.type },
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`Unable to persist login audit: ${message}`);
+    }
+    return response;
   }
 
   @Post('logout')
@@ -64,6 +95,7 @@ export class AuthController {
 
   @Post('currentUser')
   @HttpCode(HttpStatus.OK)
+  @SkipConsoleAudit()
   async getCurrentUser(
     @CurrentUser('id') userId: string,
     @Body() currentUserDto: CurrentUserDto,
