@@ -54,7 +54,6 @@ export class AuditService {
    * @returns 保存的连接审计记录
    */
   async auditConnection(dto: ConnectionAuditDto): Promise<ConnectionAudit> {
-
     // 判断是否为仅添加备注的请求（无 uuid 和 conn_id，有 session_id 和 note）
     if (!dto.uuid && dto.session_id !== undefined && dto.note !== undefined) {
       return this.addConnectionNote(dto);
