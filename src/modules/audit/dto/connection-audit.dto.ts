@@ -15,7 +15,7 @@ import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
 
 /**
  * ConnectionAuditDto
- * 用于记录连接审计信息，支持连接状态上报和备注添加
+ * Used to record connection audit information; supports connection status reporting and adding remarks
  */
 export class ConnectionAuditDto {
   @IsString()
@@ -32,7 +32,7 @@ export class ConnectionAuditDto {
   @IsNumber()
   session_id: number;
 
-  // ip 字段在 action 为 close 时可能不发送
+  // the ip field may not be sent when action is close
   @IsString()
   @IsOptional()
   ip?: string;
@@ -81,7 +81,7 @@ export class ConnectionAuditDto {
 
 /**
  * UpdateConnectionAuditDto
- * 管理端更新连接审计记录
+ * Admin-side update of a connection audit record
  */
 export class UpdateConnectionAuditDto {
   @IsString()

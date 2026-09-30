@@ -7,8 +7,8 @@ export const PAGINATION_MAX_CURRENT = 100000;
 export const PAGINATION_MAX_PAGE_SIZE = 100;
 
 /**
- * 分页查询基类
- * 统一 current / pageSize 的定义、默认值与约束，供所有列表查询 DTO 继承。
+ * Pagination query base class
+ * Unifies the definition, default values and constraints of current / pageSize for all list query DTOs to inherit.
  */
 export class PaginationQueryDto {
   @IsOptional()
@@ -27,7 +27,7 @@ export class PaginationQueryDto {
 }
 
 /**
- * 分页响应统一形状
+ * Paginated response shape
  */
 export interface PaginatedResult<T> {
   data: T[];

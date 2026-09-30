@@ -2,8 +2,8 @@ import { IsString, IsOptional, IsIn } from 'class-validator';
 import { PaginationQueryDto } from '../../../common/dto/pagination.dto';
 
 /**
- * 设备查询DTO
- * 用于获取设备列表
+ * Device query DTO
+ * Used to fetch the device list
  */
 export class DeviceQueryDto extends PaginationQueryDto {
   @IsString()

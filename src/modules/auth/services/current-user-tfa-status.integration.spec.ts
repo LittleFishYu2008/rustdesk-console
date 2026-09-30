@@ -81,7 +81,7 @@ describe('current user 2FA status', () => {
       'BASE32SECRET',
     );
 
-    // /api/currentUser 的查询：显式加载敏感字段
+    // /api/currentUser query: explicitly load sensitive fields
     const loaded = await userHelper.findByGuid(user.guid, {
       withPassword: true,
       withTfaSecret: true,
@@ -93,7 +93,7 @@ describe('current user 2FA status', () => {
     expect(payload.has_password).toBe(true);
     expect(JSON.stringify(payload)).not.toContain('BASE32SECRET');
 
-    // 未加载敏感字段时不得误报为“未启用”
+    // When sensitive fields are not loaded, must not falsely report as "not enabled"
     const withoutSecrets = await userHelper.findByGuid(user.guid);
     expect(responseHelper.buildUserPayload(withoutSecrets!)).not.toHaveProperty(
       'tfa_enabled',

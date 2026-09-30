@@ -14,7 +14,7 @@ function buildUser(): User {
   return user;
 }
 
-/** 模拟 select:false 敏感字段未被查询时的实体状态 */
+/** Simulate the entity state when select:false sensitive fields are not queried */
 function withoutSensitiveFields(user: User): User {
   delete (user as unknown as Record<string, unknown>).tfaSecret;
   delete (user as unknown as Record<string, unknown>).password;
